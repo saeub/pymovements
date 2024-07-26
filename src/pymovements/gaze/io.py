@@ -274,6 +274,7 @@ def from_asc(
         experiment: Experiment | None = None,
         add_columns: dict[str, str] | None = None,
         column_dtypes: dict[str, Any] | None = None,
+        trial_columns: list[str] | None = None,
 ) -> tuple[GazeDataFrame, dict[str, Any]]:
     """Initialize a :py:class:`pymovements.gaze.gaze_dataframe.GazeDataFrame`.
 
@@ -294,9 +295,11 @@ def from_asc(
     add_columns: dict[str, str] | None
         Dictionary containing columns to add to loaded data frame.
         (default: None)
-    column_dtypes:  dict[str, Any] | None
+    column_dtypes: dict[str, Any] | None
         Dictionary containing types for columns.
         (default: None)
+    trial_columns: list[str] | None
+        The names of the columns that should be treated as trial columns.
 
     Returns
     -------
@@ -362,6 +365,7 @@ def from_asc(
         time_column='time',
         time_unit='ms',
         pixel_columns=['x_pix', 'y_pix'],
+        trial_columns=trial_columns,
     )
     return gaze_df, metadata
 
