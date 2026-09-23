@@ -1298,7 +1298,6 @@ class Gaze:
             self,
             event_properties: str | tuple[str, dict[str, Any]]
             | list[str | tuple[str, dict[str, Any]]],
-            column_names: str | list[str | None] | None = None,
             name: str | None = None,
     ) -> None:
         """Calculate event properties for given events.
@@ -1309,10 +1308,13 @@ class Gaze:
         Parameters
         ----------
         event_properties: str | tuple[str, dict[str, Any]] | list[str | tuple[str, dict[str, Any]]]
-            The event properties to compute.
-        column_names: str | list[str | None] | None
-            The name(s) of the column(s) to be added to the event dataframe. If None, columns will
-            be named after the event properties. (default: None)
+            The event properties to compute. May be one of the following:
+                - a single measure name: `"location"`
+                - a tuple of measure name and arguments: `("location", {"method": "median"})`
+                - a list of measure names and/or tuples
+            An additional measure argument `output_name` can be specified to set the name of the
+            resulting column in the event dataframe:
+            `("location", {"method": "median", "output_name": "median_location"})`
         name: str | None
             Process only events that match the name. (default: None)
 
@@ -1324,8 +1326,7 @@ class Gaze:
         RuntimeError
             If specified event name ``name`` is missing from ``events``.
         ValueError
-            If ``column_names`` has a different length than ``event_properties``, or if there are
-            duplicate column names.
+            If there are duplicates among the `output_name` arguments of the specified measures.
         """
         if len(self.events) == 0:
             warn(
@@ -1335,7 +1336,7 @@ class Gaze:
 
         identifiers = self.trial_columns if self.trial_columns is not None else []
 
-        processor = EventSamplesProcessor(event_properties, column_names=column_names)
+        processor = EventSamplesProcessor(event_properties)
         results = processor.process(
             self.events.frame, self.samples, identifiers=identifiers, name=name,
         )

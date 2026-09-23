@@ -35,32 +35,48 @@ class EventProcessor:
 
     Parameters
     ----------
-    measures: str | list[str]
-        List of event measure names.
+    measures: str | tuple[str, dict[str, Any]] | list[str | tuple[str, dict[str, Any]]]
+        List of event measures. May be one of the following:
+            - a single measure name: `"duration"`
+            - a tuple of measure name and arguments: `("duration", {})`
+            - a list of measure names and/or tuples
+        An additional measure argument `output_name` can be specified to set the name of the
+        resulting column in the event dataframe:
+        `("duration", {"output_name": "median_duration"})`
 
     Raises
     ------
     UnknownMeasure
         If ``measures`` includes an unknown measure. See :ref:`event-measures` for an overview
         of supported measures.
+    ValueError
+        If there are duplicates among the `output_name` arguments of the specified measures.
     """
 
-    def __init__(self, measures: str | list[str]):
+    def __init__(
+        self, measures: str | tuple[str, dict[str, Any]]
+        | list[str | tuple[str, dict[str, Any]]],
+    ):
         _check_measures(measures)
+        measures_with_kwargs, column_names = _process_measure_args(measures)
 
-        if isinstance(measures, str):
-            measures = [measures]
-
-        for measure_name in measures:
+        for measure_name, _ in measures_with_kwargs:
             if measure_name not in EVENT_MEASURES:
+                known_measures = list(EVENT_MEASURES.keys())
                 raise UnknownMeasure(
-                    measure_name=measure_name, known_measures=list(EVENT_MEASURES.keys()),
+                    measure_name=measure_name, known_measures=known_measures,
                 )
 
         self.measures = [
             # initialize measure functions to create polars expressions.
-            EVENT_MEASURES[measure_name]()
-            for measure_name in measures
+            EVENT_MEASURES[measure_name](**measure_kwargs)
+            for measure_name, measure_kwargs in measures_with_kwargs
+        ]
+        # Re-alias measures to the specified column names if necessary.
+        self.measures = [
+            measure.alias(column_name) if column_name is not None and measure.meta.output_name(
+            ) != column_name else measure
+            for measure, column_name in zip(self.measures, column_names)
         ]
 
     def process(self, events: pl.DataFrame) -> pl.DataFrame:
@@ -87,10 +103,13 @@ class EventSamplesProcessor:
     Parameters
     ----------
     measures: str | tuple[str, dict[str, Any]] | list[str | tuple[str, dict[str, Any]]]
-        List of sample measures.
-    column_names: str | list[str | None] | None
-        The name(s) of the column(s) to be added to the event dataframe. If None, columns will
-        be named after the sample measures. (default: None)
+        List of sample measures. May be one of the following:
+            - a single measure name: `"location"`
+            - a tuple of measure name and arguments: `("location", {"method": "median"})`
+            - a list of measure names and/or tuples
+        An additional measure argument `output_name` can be specified to set the name of the
+        resulting column in the event dataframe:
+        `("location", {"method": "median", "output_name": "median_location"})`
 
     Raises
     ------
@@ -98,28 +117,16 @@ class EventSamplesProcessor:
         If ``event_properties`` includes an unknown measure. See :ref:`sample-measures` and
         :ref:`event-measures` for an overview of supported measures.
     ValueError
-        If ``column_names`` has a different length than ``measures``, or if there are
-        duplicate column names.
+        If there are duplicates among the `output_name` arguments of the specified measures.
     """
 
     def __init__(
             self,
             measures: str | tuple[str, dict[str, Any]]
             | list[str | tuple[str, dict[str, Any]]],
-            column_names: str | list[str | None] | None = None,
     ):
         _check_measures(measures)
-
-        measures_with_kwargs: list[tuple[str, dict[str, Any]]]
-        if isinstance(measures, str):
-            measures_with_kwargs = [(measures, {})]
-        elif isinstance(measures, tuple):
-            measures_with_kwargs = [measures]
-        else:  # we already validated above, it must be a list of strings and tuples
-            measures_with_kwargs = [
-                (measure, {}) if isinstance(measure, str) else measure
-                for measure in measures
-            ]
+        measures_with_kwargs, column_names = _process_measure_args(measures)
 
         for measure_name, _ in measures_with_kwargs:
             if measure_name not in SampleMeasureLibrary.measures:
@@ -128,36 +135,15 @@ class EventSamplesProcessor:
                     measure_name=measure_name, known_measures=known_measures,
                 )
 
-        if isinstance(column_names, str):
-            column_names = [column_names]
-        if column_names is not None and len(column_names) != len(measures_with_kwargs):
-            raise ValueError("Number of 'column_names' must match number of 'measures'.")
-        if column_names is None:
-            column_names = [None] * len(measures_with_kwargs)
-        # Check for duplicates in eventual column names.
-        evaluated_column_names = [
-            measure_name if column_name is None else column_name
-            for (measure_name, _), column_name in zip(measures_with_kwargs, column_names)
-        ]
-        if len(evaluated_column_names) != len(set(evaluated_column_names)):
-            duplicates = {
-                name
-                for name in evaluated_column_names
-                if isinstance(name, str) and evaluated_column_names.count(name) > 1
-            }
-            raise ValueError(
-                f"Duplicate column names found: {', '.join(duplicates)}. "
-                "Use 'column_names' to specify unique names for each measure.",
-            )
-
         self.measures: list[pl.Expr] = [
             # initialize measure functions to create polars expressions.
             SampleMeasureLibrary.get(measure_name)(**measure_kwargs)
             for (measure_name, measure_kwargs) in measures_with_kwargs
         ]
-        # Re-alias measures to the specified column names.
+        # Re-alias measures to the specified column names if necessary.
         self.measures = [
-            measure.alias(column_name) if column_name is not None else measure
+            measure.alias(column_name) if column_name is not None and measure.meta.output_name(
+            ) != column_name else measure
             for measure, column_name in zip(self.measures, column_names)
         ]
 
@@ -299,3 +285,44 @@ def _check_measures(
             'measures must be of type str, tuple, or list, '
             f'but received {type(measures)}.',
         )
+
+
+def _process_measure_args(
+    measures: str | tuple[str, dict[str, Any]] | list[
+        str |
+        tuple[str, dict[str, Any]]
+    ],
+) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+    """Unify measure argument types and extract column names."""
+    measures_with_kwargs: list[tuple[str, dict[str, Any]]]
+    if isinstance(measures, str):
+        measures_with_kwargs = [(measures, {})]
+    elif isinstance(measures, tuple):
+        measures_with_kwargs = [measures]
+    else:  # we already validated above, it must be a list of strings and tuples
+        measures_with_kwargs = [
+            (measure, {}) if isinstance(measure, str) else measure
+            for measure in measures
+        ]
+
+    column_names = [
+        measure_kwargs.pop('output_name', None)
+        for _, measure_kwargs in measures_with_kwargs
+    ]
+    # Check for duplicates in column names.
+    column_names = [
+        measure_name if column_name is None else column_name
+        for (measure_name, _), column_name in zip(measures_with_kwargs, column_names)
+    ]
+    if len(column_names) != len(set(column_names)):
+        duplicates = {
+            name
+            for name in column_names
+            if isinstance(name, str) and column_names.count(name) > 1
+        }
+        raise ValueError(
+            f"Duplicate output name(s) found: {', '.join(duplicates)}. "
+            "Use 'output_name' to specify unique column names for each measure.",
+        )
+
+    return measures_with_kwargs, column_names
