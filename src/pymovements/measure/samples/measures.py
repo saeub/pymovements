@@ -295,15 +295,11 @@ def location(
         \text{Location} = \text{median} \left(\text{position}_1, \ldots,
          \text{position}_n \right)
 
-    For methods ``start`` and ``end`` the location is the position of the first and last sample in
-    the event, respectively.
-
 
     Parameters
     ----------
     method: str
-        The centroid method to be used for calculation. Supported methods are ``mean``, ``median``,
-        ``first``, and ``last``.
+        The centroid method to be used for calculation. Supported methods are ``mean``, ``median``.
         (default: 'mean')
     position_column: str
         The column name of the position tuples. (default: 'position')
@@ -321,10 +317,10 @@ def location(
     ValueError
         If method is not one of the supported methods.
     """
-    if method not in {'mean', 'median', 'first', 'last'}:
+    if method not in {'mean', 'median'}:
         raise ValueError(
             f"Method '{method}' not supported. "
-            f"Please choose one of the following: ['mean', 'median', 'first', 'last'].",
+            f"Please choose one of the following: ['mean', 'median'].",
         )
 
     component_expressions = []
@@ -337,12 +333,8 @@ def location(
 
         if method == 'mean':
             expression_component = position_component.mean()
-        elif method == 'median':
+        else:  # by exclusion this must be median
             expression_component = position_component.median()
-        elif method == 'first':
-            expression_component = position_component.first()
-        else:  # by exclusion this must be last
-            expression_component = position_component.last()
 
         component_expressions.append(expression_component)
 
@@ -350,6 +342,86 @@ def location(
     result = pl.concat_list(component_expressions).first()
 
     return result.alias('location')
+
+
+@register_sample_measure
+def location_onset(
+        *,
+        position_column: str = 'position',
+        n_components: int = 2,
+) -> pl.Expr:
+    r"""Location of the onset of an event.
+
+    The location of the first sample in the event is used.
+
+    Parameters
+    ----------
+    position_column: str
+        The column name of the position tuples. (default: 'position')
+    n_components: int
+        Number of positional components. Usually these are the two components yaw and pitch.
+        (default: 2)
+
+    Returns
+    -------
+    pl.Expr
+        The location of the onset of the event.
+    """
+    component_expressions = []
+    for component in range(n_components):
+        position_component = (
+            pl.col(position_column)
+            .list.slice(0, None)
+            .list.get(component)
+        )
+
+        expression_component = position_component.first()
+        component_expressions.append(expression_component)
+
+    # Not sure why first() is needed here, but an outer list is being created somehow.
+    result = pl.concat_list(component_expressions).first()
+
+    return result.alias('location_onset')
+
+
+@register_sample_measure
+def location_offset(
+        *,
+        position_column: str = 'position',
+        n_components: int = 2,
+) -> pl.Expr:
+    r"""Location of the offset of an event.
+
+    The location of the last sample in the event is used.
+
+    Parameters
+    ----------
+    position_column: str
+        The column name of the position tuples. (default: 'position')
+    n_components: int
+        Number of positional components. Usually these are the two components yaw and pitch.
+        (default: 2)
+
+    Returns
+    -------
+    pl.Expr
+        The location of the offset of the event.
+    """
+    component_expressions = []
+    for component in range(n_components):
+        position_component = (
+            pl.col(position_column)
+            .list.slice(0, None)
+            .list.get(component)
+        )
+
+        expression_component = position_component.last()
+        component_expressions.append(expression_component)
+
+    # Not sure why first() is needed here, but an outer list is being created somehow.
+    result = pl.concat_list(component_expressions).first()
+
+    return result.alias('location_offset')
 
 
 @register_sample_measure
